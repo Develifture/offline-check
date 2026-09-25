@@ -51,7 +51,7 @@ export default class OfflineCheckReporter implements Reporter {
     }
     this.rows.set(t.id, row); // last attempt wins
     const where = row.status === 'passed' ? '' : ` [${row.phase}]`;
-    console.log(`offline-check ${row.status.toUpperCase().padEnd(10)} ${row.scenario}${where}${row.reason ? ' - ' + row.reason : ''}`);
+    console.log(`offline-check ${row.status.toUpperCase().padEnd(10)} ${row.scenario} (${project})${where}${row.reason ? ' - ' + row.reason : ''}`);
   }
   onEnd(_r: FullResult) {
     const rows = [...this.rows.values()];

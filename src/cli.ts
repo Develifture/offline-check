@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, writeFileSync } from 'node:fs';
+import { parseArgs } from 'node:util';
 import type { OfflineSpec } from './core.js';
 
 const TEMPLATE = `import { test, expect } from '@playwright/test';
@@ -32,20 +33,33 @@ for (const c of offlineChecks(spec)) test(c.name, c.run);
 
 const USAGE = `usage:
   offline-check init         write an editable offline-check.spec.ts (full check: writes, reload, reconnect)
-  offline-check url <url>    quick check, no spec: does the page stay usable and load fresh while offline?`;
+  offline-check url <url> [--device "iPhone 15"] [--browser chromium|webkit|firefox]
+                             quick check, no spec: does the page stay usable and load fresh while offline?
+                             --device uses a Playwright device profile (screen, touch, user agent, its browser).`;
 
-const [cmd, arg] = process.argv.slice(2);
-if (cmd === 'url') await quick(arg);
+const [cmd, ...rest] = process.argv.slice(2);
+if (cmd === 'url') {
+  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { device: { type: 'string' }, browser: { type: 'string' } } });
+  await quick(positionals[0], values.device, values.browser);
+}
 else if (cmd !== 'init') {
   console.log(USAGE);
   process.exit(cmd && cmd !== '--help' && cmd !== '-h' ? 1 : 0);
 }
 
 /** Zero-config check of the two scenarios that need no app knowledge. Data scenarios need a spec (init). */
-async function quick(url?: string): Promise<never> {
+async function quick(url?: string, device?: string, browserName?: string): Promise<never> {
   if (!url || !/^https?:\/\//i.test(url)) { console.error('offline-check url: give a full http(s) URL, e.g. http://localhost:3000/'); process.exit(1); }
-  const { chromium } = await import('@playwright/test');
-  const { runScenario } = await import('./core.js');
+  const pw = await import('@playwright/test');
+  const { runScenario, deviceOptions } = await import('./core.js');
+  const profile = device ? pw.devices[device] : undefined;
+  if (device && !profile) {
+    const near = Object.keys(pw.devices).filter((d) => d.toLowerCase().includes(device.toLowerCase().split(' ')[0])).slice(0, 8);
+    console.error(`offline-check: unknown device "${device}".${near.length ? ` Try: ${near.join(', ')}` : ''}`);
+    process.exit(1);
+  }
+  const engine = browserName ?? profile?.defaultBrowserType ?? 'chromium';
+  if (engine !== 'chromium' && engine !== 'webkit' && engine !== 'firefox') { console.error('offline-check: --browser must be chromium, webkit or firefox'); process.exit(1); }
   const spec: OfflineSpec = {
     url,
     // ponytail: "settled" = load + network idle + any registered service worker active. Apps that register later need a spec.
@@ -56,18 +70,20 @@ async function quick(url?: string): Promise<never> {
     },
     view: async (page) => { if (!(await page.locator('body').innerText()).trim()) throw new Error('page body is empty'); },
   };
-  const browser = await chromium.launch().catch((e: Error) => {
-    console.error(`offline-check: could not start Chromium (${e.message.split('\n')[0]}). Run: npx playwright install chromium`);
+  const browser = await pw[engine].launch().catch((e: Error) => {
+    console.error(`offline-check: could not start ${engine} (${e.message.split('\n')[0]}). Run: npx playwright install ${engine}`);
     process.exit(1);
   });
   let failed = false;
   for (const name of ['warm-disconnect', 'offline-navigation'] as const) {
-    const r = await runScenario(browser, spec, name);
-    failed ||= r.status !== 'passed';
+    const r = await runScenario(browser, spec, name, profile ? deviceOptions(profile as unknown as Record<string, unknown>) : {});
+    failed ||= r.status === 'failed';
     const sw = r.serviceWorker ? ` (service worker: ${r.serviceWorker})` : '';
-    console.log(`offline-check ${r.status.toUpperCase().padEnd(10)} ${name}${r.status === 'passed' ? sw : ` [${r.phase}] ${r.error ?? ''}`}`);
+    const detail = r.status === 'passed' ? sw : r.status === 'skipped' ? ` - ${r.reason}` : ` [${r.phase}] ${r.error ?? ''}`;
+    console.log(`offline-check ${r.status.toUpperCase().padEnd(10)} ${name}${detail}`);
   }
   await browser.close();
+  console.log(`Ran in ${engine}${device ? ` as ${device}` : ''}. Emulation is not a real device.`);
   console.log('Quick check covers only open-page and fresh-load offline. For saved data, reload and reconnect: offline-check init');
   process.exit(failed ? 1 : 0);
 }

@@ -11,7 +11,7 @@ Checking offline support by hand means ticking "Offline" in DevTools and reloadi
 
 It is a thin layer on Playwright Test. You say what "ready" and "saved" mean in your app; OfflineCheck cuts and restores the network, reloads, and collects the evidence. It is not a storage library, a sync engine or a service worker.
 
-Status: version 0.1, Chromium only, local app URL. Not published to npm yet; install from GitHub (below). npm 12 blocks installs from git unless you pass `--allow-git=all`. Nothing is uploaded anywhere.
+Status: version 0.1. Chromium and WebKit (Safari's engine), with phone emulation; local app URL. Not published to npm yet; install from GitHub (below). npm 12 blocks installs from git unless you pass `--allow-git=all`. Nothing is uploaded anywhere.
 
 ## Try the demo
 
@@ -81,6 +81,34 @@ for (const c of offlineChecks(spec)) test(c.name, c.run);
 
 `token` is a unique value per run, so tests do not depend on order or old data. `ready` must resolve only when your app is really usable (for a service worker app: after the worker is active and cached). Do not use fixed sleeps.
 
+## Phones and Safari
+
+Run the same checks as phones. The quick check takes a [Playwright device profile](https://playwright.dev/docs/emulation#devices):
+
+```bash
+npx playwright install chromium webkit
+npx offline-check url http://localhost:3000/ --device "Pixel 7"     # Android phone, Chromium
+npx offline-check url http://localhost:3000/ --device "iPhone 15"   # iPhone, WebKit (Safari's engine)
+npx offline-check url http://localhost:3000/ --browser webkit       # desktop WebKit
+```
+
+For a spec, add one Playwright project per device. OfflineCheck picks up each project's screen, touch and user agent, and the report labels every result with its project:
+
+```ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  reporter: [['list'], ['offline-check/reporter']],
+  projects: [
+    { name: 'Desktop Chrome', use: { browserName: 'chromium' } },
+    { name: 'Pixel 7', use: { ...devices['Pixel 7'] } },
+    { name: 'iPhone 15', use: { ...devices['iPhone 15'] } },
+  ],
+});
+```
+
+WebKit has one known gap. Playwright cannot load a service-worker page in WebKit while offline ([microsoft/playwright#42775](https://github.com/microsoft/playwright/issues/42775)). OfflineCheck reports those WebKit scenarios as **skipped** with the reason, so they do not fail your run. Without a service worker, the WebKit failure is real and is reported as failed. The open-page check runs fully in WebKit, and every check runs fully in Chromium, including emulated Android phones.
+
 ## Scenarios
 
 Each scenario starts from a clean browser context. Service workers are never blocked.
@@ -128,7 +156,7 @@ Add `offline-check-results/`, `test-results/`, and any Playwright auth state fil
 | Lighthouse | Performance, accessibility and SEO audits. Its PWA category was removed in v12 ([GoogleChrome/lighthouse#15535](https://github.com/GoogleChrome/lighthouse/issues/15535)) | Tests your app's own behaviour offline: your selectors, your data |
 | Workbox | A library for writing service workers and caching strategies | Complementary: Workbox builds offline support, OfflineCheck tests that it works |
 
-OfflineCheck does not replace unit tests for your storage code, and it does not test on real devices.
+OfflineCheck does not replace unit tests for your storage code. Phone profiles are emulation in a desktop browser, not real devices.
 
 ## FAQ
 
@@ -150,7 +178,9 @@ Yes. Playwright exits nonzero when a scenario fails or is not checked. See [CI](
 ## Limits
 
 - An offline simulation is evidence about the tested browser and app state. It is not a guarantee for every device, browser, storage-pressure condition, or production deployment.
-- Chromium only. Firefox, WebKit, persistent-profile restart, upgrade/migration, export/restore, offline queues, and quota tests are not in version 0.1.
+- Tested in Chromium and WebKit. Firefox may work but is not tested. Persistent-profile restart, upgrade/migration, export/restore, offline queues and storage-quota tests are not in version 0.1.
+- WebKit cannot run an offline reload of a service-worker page under Playwright ([microsoft/playwright#42775](https://github.com/microsoft/playwright/issues/42775)). Those WebKit scenarios are reported as skipped, not failed.
+- Phone profiles set the screen size, touch, user agent and browser engine. They do not reproduce real signal loss, storage eviction or battery-saving behaviour.
 - `context.setOffline` cuts the browser's network. Apps that detect offline through their own probes may behave differently on real devices.
 - A missing service worker is a result, not a failure by itself. The `offline-navigation` outcome decides the claim.
 

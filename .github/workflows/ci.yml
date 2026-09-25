@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - run: npm run typecheck
       - run: npm run build
       # healthy sample passes 4 scenarios; broken samples fail at expected phases; repeated to catch flakiness

@@ -56,7 +56,9 @@
     "service-worker",
     "e2e-testing",
     "playwright-reporter",
-    "testing"
+    "testing",
+    "webkit",
+    "mobile-testing"
   ],
   "repository": {
     "type": "git",

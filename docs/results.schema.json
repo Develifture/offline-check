@@ -130,6 +130,16 @@
               "type": "string"
             },
             "description": "On failure: same-origin paths the page had loaded (max 50, paths only)."
+          },
+          "limitation": {
+            "enum": [
+              "webkit-offline-sw"
+            ],
+            "description": "Set when a known test-tool limit, not the app, stopped the scenario. The status is then skipped."
+          },
+          "device": {
+            "type": "string",
+            "description": "Emulated viewport, e.g. '393x659 mobile touch'. Absent for the default desktop context."
           }
         }
       }

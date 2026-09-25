@@ -118,6 +118,15 @@ const noShell = (r: Row, what: string): Diagnosis => {
 
 /** Explain one result. Returns undefined for a clean pass. */
 export function diagnose(r: Row): Diagnosis | undefined {
+  if (r.limitation === 'webkit-offline-sw') {
+    return {
+      severity: 'info',
+      title: 'WebKit could not run the offline reload, a known Playwright limit',
+      happened: 'Your service worker was in control, but WebKit under Playwright refuses every offline navigation of a service-worker page.',
+      cause: 'This comes from how Playwright emulates offline in WebKit (microsoft/playwright#42775), so the result says nothing about your app.',
+      steps: ['There is nothing to fix in your app for this item.', 'The same scenario in Chromium or an emulated Android phone runs fully. Use that result.', 'To confirm on an iPhone, open the app in Safari, turn on Airplane Mode and reload.', 'Re-run WebKit once microsoft/playwright#42775 is fixed.'],
+    };
+  }
   if (r.status === 'unverified' || r.status === 'skipped') {
     return {
       severity: 'warn',

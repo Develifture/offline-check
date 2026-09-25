@@ -1,4 +1,4 @@
-import type { Browser, BrowserContext, Page, TestInfo } from '@playwright/test';
+import type { Browser, BrowserContext, BrowserContextOptions, Page, TestInfo } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
 import { redact, sanitizeUrl } from './redact.js';
 
@@ -49,6 +49,10 @@ export interface ScenarioResult {
   appFiles?: string[];
   /** Why skipped/unverified. */
   reason?: string;
+  /** Set when a known browser-automation limit, not the app, stopped the scenario. */
+  limitation?: 'webkit-offline-sw';
+  /** Emulated device or viewport, e.g. "390x664 mobile touch". Absent for the default desktop context. */
+  device?: string;
   url: string;
   browser: string;
   error?: string;
@@ -68,7 +72,7 @@ const bound = <T>(p: Promise<T>, ms: number, phase: string): Promise<T> => {
 };
 
 /** Run one scenario in a clean browser context. Never throws for app failures; returns a result. */
-export async function runScenario(browser: Browser, spec: OfflineSpec, scenario: ScenarioName): Promise<ScenarioResult> {
+export async function runScenario(browser: Browser, spec: OfflineSpec, scenario: ScenarioName, contextOptions: BrowserContextOptions = {}): Promise<ScenarioResult> {
   const token = 'oc-' + randomBytes(6).toString('hex');
   const secrets = spec.debug ? [] : [token, ...(spec.secrets ?? [])];
   const clean = (s: string) => (spec.debug ? s : redact(s, secrets));
@@ -78,6 +82,9 @@ export async function runScenario(browser: Browser, spec: OfflineSpec, scenario:
     url: sanitizeUrl(spec.url), browser: `${browser.browserType().name()} ${browser.version()}`,
     consoleErrors: [], pageErrors: [], failedRequests: [],
   };
+  const vp = contextOptions.viewport;
+  if (vp) result.device = `${vp.width}x${vp.height}${contextOptions.isMobile ? ' mobile' : ''}${contextOptions.hasTouch ? ' touch' : ''}`;
+  let controlledAtCut = false;
 
   const needsWrite = scenario === 'offline-write-reload' || scenario === 'reconnect';
   if (needsWrite && !spec.write) return { ...result, status: 'unverified', phase: 'configure', reason: 'spec.write not configured; no data assertion was made' };
@@ -90,7 +97,7 @@ export async function runScenario(browser: Browser, spec: OfflineSpec, scenario:
     await bound(fn(), ms, phase);
   };
   try {
-    context = await browser.newContext(); // clean state; service workers stay enabled
+    context = await browser.newContext(contextOptions); // clean state; service workers stay enabled
     page = await context.newPage();
     page.on('console', (m) => { if (m.type() === 'error') result.consoleErrors.push(clean(m.text().split('\n')[0])); });
     page.on('pageerror', (e) => result.pageErrors.push(clean(String(e.message).split('\n')[0])));
@@ -103,6 +110,7 @@ export async function runScenario(browser: Browser, spec: OfflineSpec, scenario:
 
     await step('warm', async () => { await p.goto(spec.url); await spec.ready(p); });
     result.exercised.push('warmed page online');
+    controlledAtCut = await p.evaluate(() => !!navigator.serviceWorker?.controller).catch(() => false);
     await step('disconnect', goOffline);
 
     if (scenario === 'warm-disconnect') {
@@ -143,6 +151,12 @@ export async function runScenario(browser: Browser, spec: OfflineSpec, scenario:
     result.status = 'failed';
     const msg = (e instanceof Error ? e.message : String(e)).replace(/\u001b\[[0-9;]*m/g, '');
     result.error = clean(spec.debug ? msg : msg.split('\n')[0]);
+    // WebKit under Playwright rejects every offline navigation of a service-worker page (microsoft/playwright#42775).
+    // That says nothing about the app, so report it as skipped. Without a service worker the failure is real.
+    if (browser.browserType().name() === 'webkit' && controlledAtCut && (result.phase === 'offline-navigation' || result.phase === 'offline-reload')
+      && /WebKit encountered an internal error/.test(msg)) {
+      return { ...result, status: 'skipped', limitation: 'webkit-offline-sw', reason: WEBKIT_REASON };
+    }
     // a browser error page (the load itself failed) shows nothing about the app, so no screenshot
     if (page && !page.url().startsWith('chrome-error:')) {
       // lets the diagnosis tell "no service worker at all" from "one that never took control"
@@ -160,6 +174,13 @@ export async function runScenario(browser: Browser, spec: OfflineSpec, scenario:
   }
   return result;
 }
+
+export const WEBKIT_REASON = 'WebKit in Playwright cannot load a service-worker page while offline (microsoft/playwright#42775). This is a test-tool limit, not an app failure. Chromium covers this scenario.';
+
+/** Device settings from a Playwright project (`use: { ...devices['iPhone 15'] }`) that a new context accepts. */
+const DEVICE_KEYS = ['viewport', 'screen', 'userAgent', 'deviceScaleFactor', 'isMobile', 'hasTouch', 'locale', 'timezoneId', 'colorScheme'] as const;
+export const deviceOptions = (use: Record<string, unknown>): BrowserContextOptions =>
+  Object.fromEntries(DEVICE_KEYS.filter((k) => use[k] !== undefined).map((k) => [k, use[k]]));
 
 /** JSON-safe copy (drops the screenshot buffer). */
 export const toJson = ({ screenshot: _s, ...r }: ScenarioResult) => r;
@@ -181,10 +202,10 @@ export function offlineChecks(spec: OfflineSpec, opts: { scenarios?: ScenarioNam
     run: async ({ browser }: { browser: Browser }, info: TestInfo) => {
       // room for every phase plus screenshot and cleanup, so a timeout still yields a row
       info.setTimeout((spec.timeout ?? 10_000) * 9 + 15_000);
-      const r = await runScenario(browser, spec, name);
+      const r = await runScenario(browser, spec, name, deviceOptions(info.project.use as Record<string, unknown>));
       await info.attach('offline-check-result', { body: JSON.stringify(toJson(r)), contentType: 'application/json' });
       if (r.screenshot) await info.attach('failure-screenshot', { body: r.screenshot, contentType: 'image/png' });
-      info.skip(r.status === 'unverified', r.reason ?? 'unverified');
+      info.skip(r.status === 'unverified' || r.status === 'skipped', r.reason ?? r.status);
       if (r.status === 'failed') throw new Error(`[${r.scenario}] failed in phase "${r.phase}": ${r.error}`);
     },
   }));

@@ -47,7 +47,7 @@ export function renderMarkdown({ rows, generatedAt, rerun }: RenderInput): strin
     '- Fix the app, not the test. Do not weaken, skip or delete OfflineCheck scenarios or their assertions.',
     '- Change the spec\'s `ready` function only to wait for a real readiness signal, such as service worker control. Never add fixed sleeps.',
     '- Each cause below is inferred from the step that broke. Confirm it in the code before changing anything.',
-    '- Re-run the check after each fix. The task is done when every scenario reports `passed`.',
+    '- Re-run the check after each fix. The task is done when every scenario reports `passed`, or `skipped` only for a documented test-tool limitation.',
     '',
     '## Verify',
     '',
@@ -58,7 +58,7 @@ export function renderMarkdown({ rows, generatedAt, rerun }: RenderInput): strin
     out.push(
       `## ${n + 1}. ${d.title}`,
       '',
-      `Severity: ${d.severity === 'fail' ? 'failure' : 'warning'}. Scenarios: ${rs.map((r) => `\`${r.scenario}\` (${r.status}${r.status === 'failed' ? ` at \`${r.phase}\`` : ''})`).join(', ')}. Spec: \`${rs[0].file}\`.`,
+      `Severity: ${d.severity === 'fail' ? 'failure' : d.severity === 'warn' ? 'warning' : 'note, no app change needed'}. Scenarios: ${rs.map((r) => `\`${r.scenario}\` on ${r.project}${r.device ? ` (${r.device})` : ''} (${r.status}${r.status === 'failed' ? ` at \`${r.phase}\`` : ''})`).join(', ')}. Spec: \`${rs[0].file}\`.`,
       '',
       `**What happened.** ${d.happened}`,
       '',

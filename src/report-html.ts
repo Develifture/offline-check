@@ -6,6 +6,8 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 const rich = (s: string) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
 
 const VERDICT = { passed: 'Works', failed: 'Broke', unverified: 'Not checked', skipped: 'Not checked' } as const;
+/** Project label (browser or device) when a run covers more than one, else empty. */
+let where = (_r: Row) => '';
 
 /* ---------- the signal trace: high line = online, low line = offline, a tear where the app broke ---------- */
 
@@ -16,7 +18,8 @@ function trace(r: Row, row: number): string {
   const phases = PHASES[r.scenario];
   const cut = phases.indexOf('disconnect');
   const level = (i: number) => (i > cut && phases[i] !== 'reconnect' ? Y_OFF : Y_ON);
-  const reached = r.status === 'passed' ? phases.length - 1 : r.status === 'failed' ? Math.max(0, phases.indexOf(r.phase)) : -1;
+  const stopped = !!r.limitation; // the test tool, not the app, stopped here
+  const reached = r.status === 'passed' ? phases.length - 1 : r.status === 'failed' || stopped ? Math.max(0, phases.indexOf(r.phase)) : -1;
   const failed = r.status === 'failed';
   // each hop: flat, then a slope to the next level, then flat into the station
   const hop = (a: number) => {
@@ -35,11 +38,14 @@ function trace(r: Row, row: number): string {
     if (failed && i === reached) {
       return `<g class="tear"><circle class="halo" cx="${x}" cy="${y}" r="17"/><circle class="bad" cx="${x}" cy="${y}" r="10"/><path class="x" d="M${x - 4} ${y - 4}L${x + 4} ${y + 4}M${x + 4} ${y - 4}L${x - 4} ${y + 4}"/></g>`;
     }
+    if (stopped && i === reached) {
+      return `<g class="tear"><circle class="halo-q" cx="${x}" cy="${y}" r="16"/><circle class="q" cx="${x}" cy="${y}" r="10"/><text class="qm" x="${x}" y="${y + 4.5}">?</text></g>`;
+    }
     const cls = reached >= 0 && i <= reached ? 'ok' : 'idle';
     return `<circle class="${cls}" cx="${x}" cy="${y}" r="5.5"/>`;
   }).join('');
-  const labels = phases.map((p, i) => `<text x="${xs(i)}" y="92" class="${failed && i === reached ? 'lbl bad' : reached >= 0 && i <= reached ? 'lbl' : 'lbl idle'}">${esc(PHASE_LABEL[p] ?? p)}</text>`).join('');
-  const desc = r.status === 'failed' ? `Broke at "${PHASE_LABEL[r.phase] ?? r.phase}"` : VERDICT[r.status];
+  const labels = phases.map((p, i) => `<text x="${xs(i)}" y="92" class="${failed && i === reached ? 'lbl bad' : stopped && i === reached ? 'lbl stop' : reached >= 0 && i <= reached ? 'lbl' : 'lbl idle'}">${esc(PHASE_LABEL[p] ?? p)}</text>`).join('');
+  const desc = r.status === 'failed' ? `Broke at "${PHASE_LABEL[r.phase] ?? r.phase}"` : stopped ? `Test tool could not run "${PHASE_LABEL[r.phase] ?? r.phase}"` : VERDICT[r.status];
   return `<svg class="trace" viewBox="0 0 ${xs(6) + 50} 100" role="img" aria-label="${esc(PLAIN[r.scenario])}: ${esc(desc)}" style="--row:${row}">
 <rect class="band" x="${offStart}" y="8" width="${offEnd - offStart}" height="68" rx="6"/><text class="band-lbl" x="${offStart + 8}" y="20">no network</text>
 <path class="ghost" d="${path(0, last)}"/>
@@ -49,9 +55,9 @@ ${nodes}${labels}</svg>`;
 
 function signal(rows: Row[]): string {
   return `<ol class="traces">${rows.map((r, i) => `<li class="trace-row ${r.status}">
-<div class="trace-name"><b>${esc(PLAIN[r.scenario])}</b><code>${esc(r.scenario)}</code></div>
+<div class="trace-name"><b>${esc(PLAIN[r.scenario])}</b>${where(r) ? `<span class="dev">${esc(where(r))}</span>` : ''}<code>${esc(r.scenario)}</code></div>
 <div class="trace-wrap">${trace(r, i)}</div>
-<span class="verdict ${r.status}">${VERDICT[r.status]}</span></li>`).join('\n')}</ol>`;
+<span class="verdict ${r.status}">${r.limitation ? 'Not testable' : VERDICT[r.status]}</span></li>`).join('\n')}</ol>`;
 }
 
 /* ---------- fixes ---------- */
@@ -75,16 +81,16 @@ function fix({ d, rows }: Issue, n: number, { rerun, image }: RenderInput): stri
   const img = shotRow?.screenshot ? image(shotRow.screenshot) : undefined;
   const id = `fix-${n}`;
   return `<article class="fix ${d.severity}" id="${id}" aria-labelledby="${id}-h">
-<div class="rail"><span class="num">${n}</span><span class="sev">${d.severity === 'fail' ? 'Must fix' : 'Should fix'}</span></div>
+<div class="rail"><span class="num">${n}</span><span class="sev">${d.severity === 'fail' ? 'Must fix' : d.severity === 'warn' ? 'Should fix' : 'No action'}</span></div>
 <div class="fix-body">
 <h3 id="${id}-h">${rich(d.title)}</h3>
-<ul class="breaks" aria-label="${d.severity === 'fail' ? 'Breaks' : 'Affects'}">${rows.map((r) => `<li>${esc(PLAIN[r.scenario])}</li>`).join('')}</ul>
+<ul class="breaks" aria-label="${d.severity === 'fail' ? 'Breaks' : 'Affects'}">${rows.map((r) => `<li>${esc(PLAIN[r.scenario])}${where(r) ? `, ${esc(where(r))}` : ''}</li>`).join('')}</ul>
 <div class="why">
 <section><h4>What happened</h4><p>${rich(d.happened)}</p></section>
 <section><h4>Why</h4><p>${rich(d.cause)}</p></section>
 </div>
-<h4 class="todo-h">How to fix it</h4>
-<ol class="todo">${d.steps.map((s, i) => `<li><label><input type="checkbox" aria-describedby="${id}-h"><span>${rich(s)}</span></label></li>`).join('')}</ol>
+${d.severity === 'info' ? `<h4 class="todo-h">What this means</h4><ul class="notes">${d.steps.map((s) => `<li>${rich(s)}</li>`).join('')}</ul>` : `<h4 class="todo-h">How to fix it</h4>
+<ol class="todo">${d.steps.map((s) => `<li><label><input type="checkbox" aria-describedby="${id}-h"><span>${rich(s)}</span></label></li>`).join('')}</ol>`}
 ${d.snippet ? `<figure class="code"><figcaption><span class="file">${esc(d.snippet.name)}</span><span class="hint">starting point, adapt to your app</span><button type="button" class="copy" data-for="${id}-code">Copy</button></figcaption><pre id="${id}-code"><code>${tint(d.snippet.code)}</code></pre></figure>` : ''}
 <div class="proof${img ? ' has-shot' : ''}">
 ${img ? `<figure class="shot"><img src="${img}" alt="The page when ${esc(PLAIN[shotRow!.scenario].toLowerCase())} broke"><figcaption>The page when it broke. Inputs and the test value are masked.</figcaption></figure>` : ''}
@@ -97,11 +103,13 @@ ${d.severity === 'fail' ? `<div class="rerun"><span class="rerun-lbl">Check the 
 
 function headline(rows: Row[], list: Issue[]) {
   const failed = rows.filter((r) => r.status === 'failed').length;
-  const open = rows.filter((r) => r.status === 'unverified' || r.status === 'skipped').length;
+  const open = rows.filter((r) => (r.status === 'unverified' || r.status === 'skipped') && !r.limitation).length;
   const fixes = list.filter((i) => i.d.severity === 'fail').length;
   if (failed) return { tone: 'failed', h1: list[0].d.title + '.', sub: `${failed} of ${rows.length} offline checks broke. ${fixes === 1 ? 'They share one cause, so one fix covers them.' : `There are ${fixes} separate causes. Fix them in the order below.`}` };
   if (open) return { tone: 'warn', h1: 'Some checks never ran.', sub: `${open} of ${rows.length} checks need more setup in the spec before they can pass.` };
-  if (list.length) return { tone: 'warn', h1: 'Works offline, with a caveat.', sub: `All ${rows.length} checks passed. ${plural(list.length, 'thing')} below could still fail for real users.` };
+  const warns = list.filter((i) => i.d.severity === 'warn').length;
+  if (warns) return { tone: 'warn', h1: 'Works offline, with a caveat.', sub: `All checks that ran passed. ${plural(warns, 'thing')} below could still fail for real users.` };
+  if (list.length) return { tone: 'passed', h1: 'Works offline.', sub: `Every check that could run passed. ${plural(rows.length - rows.filter((r) => r.status === 'passed').length, 'check')} could not run because of a test-tool limit; see the note below.` };
   return { tone: 'passed', h1: 'Works offline.', sub: `All ${rows.length} checks passed. The app opens, keeps data and recovers with no network.` };
 }
 
@@ -137,6 +145,7 @@ a{color:inherit;text-underline-offset:3px}
 .trace-row{display:grid;grid-template-columns:minmax(10rem,15rem) minmax(0,1fr) 6.5rem;gap:1.2rem;align-items:center;padding:.9rem 0;border-bottom:1px solid rgba(180,200,255,.12)}
 .trace-name b{display:block;font-weight:600;line-height:1.3}
 .trace-name code{font-size:.78rem;color:var(--ice-dim)}
+.trace-name .dev{display:inline-block;margin:.15rem .5rem .1rem 0;font-size:.75rem;font-weight:600;color:var(--navy);background:var(--ice);border-radius:4px;padding:0 .4rem}
 .trace-wrap{overflow-x:auto;scrollbar-width:thin}
 .trace{display:block;width:100%;min-width:34rem;height:auto;overflow:visible}
 .trace .band{fill:var(--ice-faint)}
@@ -147,10 +156,13 @@ a{color:inherit;text-underline-offset:3px}
 .trace circle.idle{fill:var(--navy);stroke:var(--ice-dim);stroke-width:1.5;opacity:.8}
 .trace .halo{fill:var(--pink);opacity:.2}
 .trace circle.bad{fill:var(--pink)}
+.trace .halo-q{fill:var(--gold);opacity:.18}.trace circle.q{fill:var(--gold)}
+.trace .qm{font:800 13px "Segoe UI",sans-serif;fill:var(--navy);text-anchor:middle}
 .trace .x{stroke:#fff;stroke-width:2.4;stroke-linecap:round}
 .trace .lbl{font:12.5px "Segoe UI",sans-serif;fill:var(--ice);text-anchor:middle}
 .trace .lbl.idle{fill:var(--ice-dim);opacity:.8}
-.trace .lbl.bad{fill:var(--pink);font-weight:700}
+.trace .lbl.bad{fill:var(--pink);font-weight:700}.trace .lbl.stop{fill:var(--gold);font-weight:700}
+.notes{margin:.5rem 0 0;padding-left:1.2rem;max-width:68ch}.notes li{margin:.35rem 0}
 .passed .trace .done{stroke:var(--mint)}.passed .trace circle.ok{fill:var(--mint)}
 .verdict{justify-self:end;font-size:1.25rem;letter-spacing:.01em}
 .verdict::before{display:inline-block;width:1.1em;font-weight:800}
@@ -173,12 +185,12 @@ a{color:inherit;text-underline-offset:3px}
 .fix+.fix{border-top:1px solid var(--rule)}
 .rail{display:flex;flex-direction:column;align-items:flex-start;gap:.4rem}
 .num{font-size:4.6rem;line-height:.8;color:var(--bad)}
-.fix.warn .num{color:var(--warn)}
+.fix.warn .num{color:var(--warn)}.fix.info .num{color:var(--soft)}.fix.info{border-top-color:var(--rule)}
 .sev{font-size:.8rem;font-weight:600;color:var(--soft)}
 .fix h3{font-size:clamp(1.6rem,2.8vw,2.15rem);line-height:1.08;margin:0;max-width:26ch}
 .breaks{list-style:none;display:flex;flex-wrap:wrap;gap:.4rem;margin:.9rem 0 0;padding:0}
 .breaks li{font-size:.82rem;font-weight:600;padding:.2rem .65rem;border-radius:99px;border:1.5px solid var(--bad);color:var(--bad)}
-.fix.warn .breaks li{border-color:var(--warn);color:var(--warn)}
+.fix.warn .breaks li{border-color:var(--warn);color:var(--warn)}.fix.info .breaks li{border-color:var(--soft);color:var(--soft)}
 .why{display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin:1.8rem 0 0}
 .why section{border-left:3px solid var(--rule);padding-left:1rem}
 h4{font-size:.95rem;font-weight:700;margin:0 0 .25rem}
@@ -238,23 +250,26 @@ const LOGO = `<svg viewBox="0 0 28 20" aria-hidden="true"><path d="M1 5h8l3 10h1
 
 export function renderHtml(input: RenderInput): string {
   const { rows, generatedAt } = input;
+  const projects = new Set(rows.map((r) => r.project));
+  where = (r) => (projects.size > 1 ? r.project + (r.device ? ` (${r.device})` : '') : '');
   const list = issues(rows);
   const h = headline(rows, list);
   const urls = [...new Set(rows.map((r) => r.url))];
   const works = rows.filter((r) => r.status === 'passed' && !diagnose(r));
   const when = generatedAt.replace('T', ' ').slice(0, 16) + ' UTC';
   const failing = list.some((i) => i.d.severity === 'fail');
+  const warnOnly = !failing && list.some((i) => i.d.severity === 'warn');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark"><title>${esc(h.h1)} OfflineCheck</title><style>${CSS}</style></head><body>
 <header class="hero ${h.tone}"><div class="wrap">
-<div class="bar"><span class="wordmark">${LOGO}OfflineCheck</span><span class="run">Tested <b>${urls.map(esc).join(', ')}</b><br>${esc(rows[0].browser)}, ${esc(when)}</span></div>
+<div class="bar"><span class="wordmark">${LOGO}OfflineCheck</span><span class="run">Tested <b>${urls.map(esc).join(', ')}</b><br>${[...new Set(rows.map((r) => r.browser))].map(esc).join(', ')}, ${esc(when)}</span></div>
 <h1>${esc(h.h1)}</h1>
 <p class="lede">${esc(h.sub)}</p>
 ${signal(rows)}
 </div></header>
 <main class="wrap">
-${list.length ? `<div class="section-h"><h2>${failing ? 'What to fix' : 'Worth a look'}</h2><p>${failing ? 'In order. Tick steps off as you go.' : 'Nothing is broken, but these could be.'}</p></div>
+${list.length ? `<div class="section-h"><h2>${failing ? 'What to fix' : warnOnly ? 'Worth a look' : 'Notes'}</h2><p>${failing ? 'In order. Tick steps off as you go.' : warnOnly ? 'Nothing is broken, but these could be.' : 'Nothing to fix.'}</p></div>
 ${list.map((it, i) => fix(it, i + 1, input)).join('\n')}` : ''}
 ${works.length ? `<div class="section-h"><h2>What already works</h2></div><ul class="works">${works.map((r) => `<li>${esc(PLAIN[r.scenario])}<code>${esc(r.scenario)}</code></li>`).join('')}</ul>` : ''}
 ${list.length ? `<aside class="handoff"><div><h2>Handing this to a coding agent?</h2><p>The fix plan has the same diagnosis as a checklist, with the evidence, rules for the agent, and the command that proves the fix.</p></div><a href="fix-plan.md">Open fix-plan.md</a></aside>` : ''}
