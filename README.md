@@ -11,7 +11,7 @@ Checking offline support by hand means ticking "Offline" in DevTools and reloadi
 
 It is a thin layer on Playwright Test. You say what "ready" and "saved" mean in your app; OfflineCheck cuts and restores the network, reloads, and collects the evidence. It is not a storage library, a sync engine or a service worker.
 
-Status: version 0.1, Chromium only, local app URL. Not published to npm yet; install from GitHub (below). Nothing is uploaded anywhere.
+Status: version 0.1, Chromium only, local app URL. Not published to npm yet; install from GitHub (below). npm 12 blocks installs from git unless you pass `--allow-git=all`. Nothing is uploaded anywhere.
 
 ## Try the demo
 
@@ -29,7 +29,7 @@ Open `offline-check-results/report.html` after a run. It leads with the likely c
 ## Quick check, no spec
 
 ```bash
-npm i -D github:Develifture/offline-check @playwright/test
+npm i -D github:Develifture/offline-check @playwright/test --allow-git=all
 npx playwright install chromium
 npx offline-check url http://localhost:3000/
 ```
@@ -39,7 +39,7 @@ This runs the two scenarios that need no knowledge of your app: the open page ke
 ## Use it on your app
 
 ```bash
-npm i -D github:Develifture/offline-check @playwright/test
+npm i -D github:Develifture/offline-check @playwright/test --allow-git=all
 npx offline-check init          # writes one editable offline-check.spec.ts
 ```
 
