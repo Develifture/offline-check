@@ -1,0 +1,9 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+offline-check-results/
+*.auth.json
+storageState*.json
+.env
+.claude-flow/

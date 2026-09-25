@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OfflineCheck results.json (schemaVersion 1)",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "results"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "scenario",
+          "status",
+          "phase",
+          "exercised",
+          "url",
+          "browser",
+          "consoleErrors",
+          "pageErrors",
+          "failedRequests",
+          "project",
+          "retry"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          },
+          "scenario": {
+            "enum": [
+              "warm-disconnect",
+              "offline-navigation",
+              "offline-write-reload",
+              "reconnect"
+            ]
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "skipped",
+              "unverified"
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "description": "Failing phase, or last phase reached when passed."
+          },
+          "exercised": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What was actually done before the result."
+          },
+          "serviceWorker": {
+            "enum": [
+              "controlled",
+              "none"
+            ],
+            "description": "offline-navigation only: whether a service worker controlled the offline load."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why unverified or skipped."
+          },
+          "url": {
+            "type": "string",
+            "description": "Origin and path only."
+          },
+          "browser": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string",
+            "description": "First line, redacted, max 300 chars (unless debug)."
+          },
+          "consoleErrors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pageErrors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failedRequests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "screenshot": {
+            "type": "string",
+            "description": "File name next to results.json. Masked, may still show page content."
+          },
+          "project": {
+            "type": "string",
+            "description": "Playwright project name."
+          },
+          "file": {
+            "type": "string",
+            "description": "Spec file that registered the scenario, relative to the working directory."
+          },
+          "retry": {
+            "type": "integer",
+            "description": "Retry index of the reported attempt (last attempt wins)."
+          },
+          "swRegistered": {
+            "type": "boolean",
+            "description": "On failure: whether the page had registered any service worker."
+          },
+          "appFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "On failure: same-origin paths the page had loaded (max 50, paths only)."
+          }
+        }
+      }
+    }
+  }
+}
